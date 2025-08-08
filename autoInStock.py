@@ -3,62 +3,107 @@ import base64
 import time
 import mysql.connector
 from datetime import datetime, timedelta
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Tuple
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
-# API 設定
-API_ID = "03e0704b56-svpw-405o-nfcm-fmmbvb"
-API_KEY = "1X5Kl5THj7VAfZ5m6Nv5BGnqb2n8VK8MlKCO2NePb8fYa55Xx38STID7Lt5mNdrB"
+# 載入.env檔案
+env_path = (
+    Path(__file__).resolve().parents[1]  # 往上兩層 -> /python
+    / ".env"
+)
+load_dotenv(dotenv_path=env_path)
 
-# API URL
-TOKEN_URL = "https://hdw001.changliu.com.tw/api_v1/token/authorize.php"
-STOCKIN_URL = "https://hdw001.changliu.com.tw/api_v1/inventory/stockin_record.php"
+# API 設定（從.env檔案讀取）
+API_ID = os.getenv("API_ID")
+API_KEY = os.getenv("API_KEY")
 
-# MySQL 設定
+# API URL（從.env檔案讀取）
+TOKEN_URL = os.getenv("TOKEN_URL")
+STOCKIN_URL = os.getenv("STOCKIN_URL")
+
+# MySQL 設定（從.env檔案讀取）
 DB_CONFIG = {
-    "host": "34.136.7.211",
-    "user": "a1251chu",
-    "password": "Skc6168jemq0!~!",
-    "database": "ragic_database"
+    "host": os.getenv("MYSQL_HOST"),
+    "user": os.getenv("MYSQL_USER"),
+    "password": os.getenv("MYSQL_PASSWORD"),
+    "database": os.getenv("MYSQL_DATABASE")
 }
 
-# Ragic 設定
-RAGIC_URL = "https://ap9.ragic.com/goodmoonmood/ragicinventory/12"
-RAGIC_HEADERS = {
-    "Authorization": "Basic aEJ0ellNcGVGbDVhR2pYRGtBbk5kNnFYTUtNL2FWL0VNNkkvSXE5emF6WXB0Y20xejhsSlI0SjJXTUNhUExWREQ1ajFvd2xUVHZVPQ==",
-    "Content-Type": "application/json"
-}
+# Ragic 設定（從.env檔案讀取）
+RAGIC_EMAIL = os.getenv("RAGIC_EMAIL")
+RAGIC_PASSWORD = os.getenv("RAGIC_PASSWORD")
+RAGIC_BASE_URL = os.getenv("RAGIC_BASE_URL")
+RAGIC_INVENTORY_URL = f"{RAGIC_BASE_URL}/goodmoonmood/ragicinventory/12"
 
-# Email 設定
-EMAIL_CONFIG = {
-    "smtp_server": "smtp.gmail.com",
-    "smtp_port": 587,
-    "sender_email": "richard@goodmoonmood.com",
-    "sender_password": "wcbncemxyirbsspy",
-    "receiver_emails": ["richard@goodmoonmood.com", "terry@goodmoonmood.com"]
-}
+# Google Chat webhook URL
+CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAeZVeIiE/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=2RYGjPvUKuyZuGORBHBfbzuBH48kaoe2Qjc8zoR5ESE"
 
-def send_email(subject: str, content: str):
-    """發送 Email 通知"""
-    msg = MIMEMultipart()
-    msg['From'] = EMAIL_CONFIG['sender_email']
-    msg['To'] = ", ".join(EMAIL_CONFIG['receiver_emails'])
-    msg['Subject'] = subject
-    
-    msg.attach(MIMEText(content, 'plain', 'utf-8'))
+def send_chat_report(subject: str, content: str):
+    """發送通知到 Google Chat webhook"""
+    try:
+        # 組訊息內容
+        body = f"{subject}\n\n{content}"
+        
+        # Google Chat訊息格式
+        payload = {
+            "text": body
+        }
+        resp = requests.post(CHAT_WEBHOOK_URL, json=payload, timeout=10)
+        if resp.status_code == 200:
+            print("✅ 通知已發送至 Google Chat")
+        else:
+            print(f"❌ Google Chat 通知失敗: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"❌ Google Chat 通知發送失敗: {str(e)}")
+
+def get_ragic_session_id():
+    """獲取Ragic的session ID"""
+    auth_url = f"{RAGIC_BASE_URL}/AUTH"
+    payload = {
+        "u": RAGIC_EMAIL,
+        "p": RAGIC_PASSWORD,
+        "login_type": "sessionId"
+    }
     
     try:
-        server = smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'])
-        server.starttls()
-        server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
-        server.send_message(msg)
-        print("✅ Email 發送成功")
+        response = requests.post(auth_url, data=payload)
+        response.raise_for_status()
+        session_id = response.text.strip()
+        
+        if session_id == "-1":
+            print("❌ Ragic認證失敗")
+            return None
+        return session_id
     except Exception as e:
-        print(f"❌ Email 發送失敗: {str(e)}")
-    finally:
-        server.quit()
+        print(f"❌ 獲取Ragic session ID時發生錯誤: {str(e)}")
+        return None
+
+def update_ragic_stock(ragic_id, qty):
+    """更新Ragic庫存（使用帳號密碼方式）"""
+    try:
+        # 獲取session ID
+        session_id = get_ragic_session_id()
+        if not session_id:
+            return False
+
+        update_url = f"{RAGIC_INVENTORY_URL}/{ragic_id}?sid={session_id}"
+        update_data = {
+            "1004849": str(qty),  # 數量欄位
+            "1004850": "Yes"       # 確認欄位
+        }
+        
+        response = requests.post(
+            update_url,
+            json=update_data,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        return response.status_code == 200
+    except Exception as e:
+        print(f"❌ 更新Ragic庫存時發生錯誤 (ID: {ragic_id}): {str(e)}")
+        return False
 
 def get_api_token():
     """取得 API Token"""
@@ -139,21 +184,10 @@ def process_single_day(year: int, month: int, day: int, access_token: str) -> Tu
                             ragic_id = result[0]
                             found_records += 1
                             
-                            # 更新 Ragic
-                            update_data = {
-                                "1004849": str(item['qty']),
-                                "1004850": "Yes"
-                            }
-                            
-                            ragic_response = requests.post(
-                                f"{RAGIC_URL}/{ragic_id}",
-                                headers=RAGIC_HEADERS,
-                                json=update_data,
-                                params={"api": ""}
-                            )
-                            
-                            if ragic_response.status_code == 200:
+                            # 更新 Ragic（使用新的帳號密碼方式）
+                            if update_ragic_stock(ragic_id, item['qty']):
                                 updated_records += 1
+                                print(f"✅ 成功更新 Ragic ID: {ragic_id}, 商品: {item['sku']}, 數量: {item['qty']}")
                             else:
                                 errors.append(f"Ragic更新失敗 - ID:{ragic_id}, 商品:{item['sku']}")
                     finally:
@@ -212,8 +246,8 @@ def main():
             # 避免請求過快
             time.sleep(1)
         
-        # 準備 Email 內容
-        email_content = (
+        # 準備通知內容
+        report_content = (
             f"進庫資料處理報告\n\n"
             f"處理期間: {(today - timedelta(days=15)).strftime('%Y-%m-%d')} 到 {today.strftime('%Y-%m-%d')}\n"
             f"總計找到記錄: {total_found}\n"
@@ -222,17 +256,17 @@ def main():
         )
         
         if all_errors:
-            email_content += f"\n錯誤記錄:\n" + "\n".join(all_errors)
+            report_content += f"\n錯誤記錄:\n" + "\n".join(all_errors)
         
-        # 發送 Email
-        send_email(
+        # 發送通知（改為Google Chat）
+        send_chat_report(
             f"進庫資料處理報告 - {today.strftime('%Y-%m-%d')}",
-            email_content
+            report_content
         )
         
     except Exception as e:
         error_content = f"程式執行失敗:\n{str(e)}"
-        send_email("❌ 進庫資料處理失敗", error_content)
+        send_chat_report("❌ 進庫資料處理失敗", error_content)
         raise
 
 if __name__ == "__main__":
