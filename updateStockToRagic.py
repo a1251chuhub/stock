@@ -2,68 +2,70 @@ import mysql.connector
 import requests
 import base64
 import math
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
-# 資料庫設定
+# 載入.env檔案
+env_path = (
+    Path(__file__).resolve().parents[1]  # 往上兩層 -> /python
+    / ".env"
+)
+load_dotenv(dotenv_path=env_path)
+
+# 資料庫設定（從.env檔案讀取）
 DB_CONFIG = {
-    'host': '34.136.7.211',
-    'user': 'a1251chu',
-    'password': 'Skc6168jemq0!~!',
-    'database': 'ragic_database'
+    'host': os.getenv("MYSQL_HOST"),
+    'user': os.getenv("MYSQL_USER"),
+    'password': os.getenv("MYSQL_PASSWORD"),
+    'database': os.getenv("MYSQL_DATABASE")
 }
 
-# Ragic配置
-RAGIC_EMAIL = "goodmoonmood@gmail.com"
-RAGIC_PASSWORD = "QmJez57!"
-RAGIC_BASE_URL = "https://ap9.ragic.com"
-RAGIC_INVENTORY_URL = "https://ap9.ragic.com/goodmoonmood/ragicinventory/20008"
+# Ragic配置（從.env檔案讀取）
+RAGIC_EMAIL = os.getenv("RAGIC_EMAIL")
+RAGIC_PASSWORD = os.getenv("RAGIC_PASSWORD")
+RAGIC_BASE_URL = os.getenv("RAGIC_BASE_URL")
+RAGIC_INVENTORY_URL = f"{RAGIC_BASE_URL}/goodmoonmood/ragicinventory/20008"
 
-# Email配置
-GMAIL_USER = "richard@goodmoonmood.com"
-GMAIL_PASSWORD = "wcbncemxyirbsspy"  # 應用程式密碼
-RECIPIENT_EMAIL = "richard@goodmoonmood.com,terry@goodmoonmood.com"
+# Google Chat webhook URL
+CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAeZVeIiE/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=2RYGjPvUKuyZuGORBHBfbzuBH48kaoe2Qjc8zoR5ESE"
 
 API_ID = '03e0704b56-svpw-405o-nfcm-fmmbvb'
 API_KEY = '1X5Kl5THj7VAfZ5m6Nv5BGnqb2n8VK8MlKCO2NePb8fYa55Xx38STID7Lt5mNdrB'
 BASE_URL = 'https://hdw001.changliu.com.tw/api_v1'
 
-def send_update_email(updated_products):
-    """發送更新通知email"""
+def send_chat_report(updated_products):
+    """發送更新通知到 Google Chat webhook"""
     try:
-        msg = MIMEMultipart()
-        msg['From'] = GMAIL_USER
-        msg['To'] = RECIPIENT_EMAIL
-        msg['Subject'] = f"倉庫庫存更新通知 - {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}"
-
-        # 建立email內容
+        # 組訊息內容
         body = f"""
-        執行時間: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}
-        
-        已更新的商品庫存資訊：
-        
+倉庫庫存更新通知 - {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}
+
+執行時間: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}
+
+已更新的商品庫存資訊：
         """
         
         for product in updated_products:
             body += f"""
-        商品UID: {product['id']}
-        SKU: {product['sku']}
-        更新庫存: {product['stock']}
-        -------------------------
+商品UID: {product['id']}
+SKU: {product['sku']}
+更新庫存: {product['stock']}
+-------------------------
             """
 
-        msg.attach(MIMEText(body, 'plain'))
-
-        # 使用SSL發送郵件
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(GMAIL_USER, GMAIL_PASSWORD)
-            server.send_message(msg)
-            
-        print("✅ 更新通知email已成功發送")
+        # Google Chat訊息格式
+        payload = {
+            "text": body
+        }
+        resp = requests.post(CHAT_WEBHOOK_URL, json=payload, timeout=10)
+        if resp.status_code == 200:
+            print("✅ 更新通知已發送至 Google Chat")
+        else:
+            print(f"❌ Google Chat 通知失敗: {resp.status_code} {resp.text}")
     except Exception as e:
-        print(f"❌ 發送email時發生錯誤: {str(e)}")
+        print(f"❌ Google Chat 通知發送失敗: {str(e)}")
 
 def get_ragic_session_id():
     """獲取Ragic的session ID"""
@@ -208,10 +210,10 @@ def main():
                     'stock': stock
                 })
 
-    # 6. 發送更新通知email
+    # 6. 發送更新通知（改為Google Chat）
     if updated_products:
-        send_update_email(updated_products)
-        print(f"\n✅ 已成功更新 {len(updated_products)} 筆商品並發送通知郵件")
+        send_chat_report(updated_products)
+        print(f"\n✅ 已成功更新 {len(updated_products)} 筆商品並發送通知")
 
 if __name__ == "__main__":
     main()
