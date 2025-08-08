@@ -38,22 +38,14 @@ BASE_URL = 'https://hdw001.changliu.com.tw/api_v1'
 def send_chat_report(updated_products):
     """發送更新通知到 Google Chat webhook"""
     try:
-        # 組訊息內容
+        # 組簡潔的訊息內容
         body = f"""
-倉庫庫存更新通知 - {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}
+貨達倉庫庫存更新通知
 
-執行時間: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}
-
-已更新的商品庫存資訊：
+📅 更新日期: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}
+✅ 更新狀態: 已同步至Ragic
+📦 總商品數: {len(updated_products)} 件
         """
-        
-        for product in updated_products:
-            body += f"""
-商品UID: {product['id']}
-SKU: {product['sku']}
-更新庫存: {product['stock']}
--------------------------
-            """
 
         # Google Chat訊息格式
         payload = {
